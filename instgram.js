@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         下载instagram图片
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      3.0
 // @description  Download instgram picture, only support picture
 // @description  Click three circle button to show '下载图片' button
 // @description  2.0 Support post with multiple pictures 支持多图的帖子
+// @description  3.0 Support directly download pictures and videos 支持直接下载图片和视频
 // @author       jaywang
 // @match        https://www.instagram.com/*
 // @require      https://cdn.jsdelivr.net/npm/jquery@3.2.1/dist/jquery.min.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/axios/0.24.0/axios.min.js
 // @icon         data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==
 // @grant        unsafeWindow
 // @run-at       document-idle
@@ -21,39 +21,56 @@
     // Your code here...
     /** 更多选项列表的选择器 */
     const selectionListSelector = 'div.RnEpo.Yx5HN > div > div > div > div';
+    /** 当前post下的用户名称选择器 */
+    const usernameASelector = 'header.Ppjfr  a.ZIAjV';
     /** 复制图片按钮选择器 */
     const copyURLSelector = `${selectionListSelector} > button:nth-last-child(3)`;
     /** 下载图片按钮 */
-    const downloadPictureBtn = '<button downloadpicture="true" class="aOOlW   HoLwm " tabindex="0" style="color: #58c322">下载图片</button>';
+    const jaywangdownloadBtn = '<button jaywangdownload="jaywang" class="aOOlW" tabindex="0" style="color: #58c322">下载</button>';
     /**
      * 当前post的下标
-     * -2：没空
-     * -1：单图post
-     * 0～N：多图post
+     * -1: 代表不合法下标
      */
-    let currentIndex = -2;
-    /** 
+    let currentIndex = -1;
+    /**
+     * 当前post
+     */
+    let currentPost;
+    /**
      * 下载图片按钮事件
      * 点击三个小点更多按钮
      */
     $('body').click(async (el) => {
         /** 下载图片按钮事件 */
-        if (el.target.getAttribute('downloadpicture') === 'true') {
+        if (el.target.getAttribute('jaywangdownload') === 'jaywang') {
             const index = currentIndex;
-            currentIndex = -2;
-            $(copyURLSelector).click();
-            const copiedText = await navigator.clipboard.readText();
-            downloadPicture(copiedText, index);
+            const post = currentPost;
+            currentIndex = -1;
+            currentPost = null;
+
+            const username = post.querySelector(usernameASelector).text;
+
+            const isPrivate = isPrivateUser();
+            let initSrc;
+            let src;
+            if (isPrivate) {
+                src = getPrivateSrc(post.querySelector('._97aPb'));
+            } else {
+                $(copyURLSelector).click();
+                initSrc = await navigator.clipboard.readText();
+                src = await getResource(initSrc, index);
+            }
+            saveAs(src, getName(username, index));
         }
 
         /** 点击三个小点更多按钮 */
         if (el.target.closest('button.wpO6b')) {
             /** 获取当前post */
-            const currentPost = el.target.closest('article');
+            currentPost = el.target.closest('article');
             /** 容纳点点点的容器 */
             const container = currentPost.querySelector('._97aPb');
             const dots = currentPost.querySelector('._3eoV-');
-            currentIndex = isMultiplePost(container) ? getPostIndex(dots) : -1;
+            currentIndex = isMultiplePost(container) ? getPostIndex(dots) : 0;
         }
     });
     /**  */
@@ -63,7 +80,8 @@
         for (const record of mutationRecord) {
             const nodeList = record.addedNodes;
             if (nodeList.length === 1 && isMoreOptionButton(nodeList[0])) {
-                $(selectionListSelector).prepend(downloadPictureBtn);
+                $(selectionListSelector).prepend(jaywangdownloadBtn);
+                return;
             }
         }
     };
@@ -88,36 +106,29 @@
     }
 
     /**
-     * 根据链接下载图片
+     * 获取资源链接和名称
      * @param {string} uri
      * @param {number} index
      */
-    async function downloadPicture(uri, index) {
+    async function getResource(uri, index) {
         let formatedUri = uri;
         if (uri.includes('?utm_source')) {
             formatedUri = uri.match(/.*(?=\?utm_source)/);
+            formatedUri += '?__a=1';
         }
-        formatedUri += '?__a=1';
-        try {
-            const data = await axios.get(formatedUri);
-            let src = '';
-            if (index === -2) {
-                return;
-            }
-            if (index === -1) {
-                src = data.data.graphql.shortcode_media.display_resources[2].src;
-            }
-            if (index >= 0) {
-                const edge = data.data.graphql.shortcode_media.edge_sidecar_to_children.edges[index];
-                src = edge.node.display_resources[2].src;
-            }
-            // window.open(src, '_blank');
-            // download(src);
-            downloadBlob(src, filename);
-            console.log('picture src :>> ', src);
-        } catch (error) {
-            console.log('download error :>> ', error);
-        }
+        const result = await fetch(formatedUri);
+        const data = await result.json();
+        const username = data.graphql.shortcode_media.owner.username;
+        const isSingle = data.graphql.shortcode_media.edge_sidecar_to_children === undefined;
+        const node = isSingle
+            ? data.graphql.shortcode_media
+            : data.graphql.shortcode_media.edge_sidecar_to_children.edges[index].node;
+
+        const isVideo = node.is_video;
+        const src = isVideo
+            ? node.video_url
+            : node.display_resources[node.display_resources.length - 1].src;
+        return src;
 
     }
 
@@ -125,7 +136,7 @@
      * 在浏览器里面打开
      * @param {string} src
      */
-    function download(src) {
+    function openInBrowser(src) {
         const a = document.createElement('a');
         a.target = '_blank';
         a.href = src;
@@ -137,11 +148,17 @@
     /**
      * 另存为图片或视频
      * @param {string} src 下载源
-     * @param {string} filename 图片名称
+     * @param {string} name 图片名称
      */
-     async function downloadBlob(src, filename) {
+    async function saveAs(src, name) {
         const data = await fetch(src);
-        
+        const blob = await data.blob();
+        const domString = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = domString;
+        a.setAttribute('download', name);
+        a.click();
     }
 
     /**
@@ -168,5 +185,51 @@
      */
     function isMultiplePost(el) {
         return el.querySelector('._3eoV-') !== null;
+    }
+
+    /**
+     * 格式化的日期
+     * @returns {string}
+     */
+    function getFormatedDate() {
+        const d = new Date();
+        return '' + d.getHours() + d.getMinutes() + d.getSeconds();
+    }
+
+    /**
+     * 判断是否是私人用户
+     * @returns {boolean}
+     */
+    function isPrivateUser() {
+        const nodeList = document.querySelector(selectionListSelector).querySelectorAll('.HoLwm');
+        return nodeList.length <= 2;
+    }
+
+    /**
+     * 获取图片，视频资源链接
+     * @param container
+     * @returns {string}
+     */
+    function getPrivateSrc(container) {
+        const img = container.querySelectorAll('img');
+        const video = container.querySelectorAll('video');
+        if (img) {
+            const sets = img.srcset.split(',');
+            const lastSet = sets[0];
+            return lastSet.split(' ')[0];
+        }
+        if (video) {
+            return video.src;
+        }
+    }
+
+    /**
+     * 根据名称获取下标
+     * @param {string} username
+     * @param {number} index
+     * @returns {string}
+     */
+    function getName(username, index) {
+        return `${username.split('.').join('')}_${index + 1}_${getFormatedDate()}`;
     }
 })();
