@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         下载instagram图片
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  Download instgram picture, only support picture
 // @description  Click three circle button to show '下载图片' button
 // @description  2.0 Support post with multiple pictures 支持多图的帖子
@@ -112,7 +112,8 @@
                 src = edge.node.display_resources[2].src;
             }
             // window.open(src, '_blank');
-            download(src);
+            // download(src);
+            downloadBlob(src, filename);
             console.log('picture src :>> ', src);
         } catch (error) {
             console.log('download error :>> ', error);
@@ -121,7 +122,7 @@
     }
 
     /**
-     * 下载源
+     * 在浏览器里面打开
      * @param {string} src
      */
     function download(src) {
@@ -131,6 +132,16 @@
         document.body.append(a);
         a.click();
         a.remove();
+    }
+
+    /**
+     * 另存为图片或视频
+     * @param {string} src 下载源
+     * @param {string} filename 图片名称
+     */
+     async function downloadBlob(src, filename) {
+        const data = await fetch(src);
+        
     }
 
     /**
