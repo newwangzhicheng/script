@@ -1,11 +1,10 @@
 // ==UserScript==
-// @name         下载instagram图片
+// @name         Instagram: 图片，视频下载器
+// @name:en      Instagram: pictures, video downloader
 // @namespace    http://tampermonkey.net/
 // @version      3.0
-// @description  Download instgram picture, only support picture
-// @description  Click three circle button to show '下载图片' button
-// @description  2.0 Support post with multiple pictures 支持多图的帖子
-// @description  3.0 Support directly download pictures and videos 支持直接下载图片和视频
+// @description  Instagram下载器，支持图片和视频
+// @description:en  Downloader for Instagram, support pictures and videos
 // @author       jaywang
 // @match        https://www.instagram.com/*
 // @require      https://cdn.jsdelivr.net/npm/jquery@3.2.1/dist/jquery.min.js
@@ -45,9 +44,6 @@
         if (el.target.getAttribute('jaywangdownload') === 'jaywang') {
             const index = currentIndex;
             const post = currentPost;
-            currentIndex = -1;
-            currentPost = null;
-
             const username = post.querySelector(usernameASelector).text;
 
             const isPrivate = isPrivateUser();
@@ -99,15 +95,11 @@
      * @return {boolean}
      */
     function isMoreOptionButton(node) {
-        const classList = node.classList;
-        if (classList) {
-            return classList.contains('RnEpo') && classList.contains('Yx5HN');
-        }
-        return false;
+        return node.querySelector('.mt3GC');
     }
 
     /**
-     * 获取资源链接和名称
+     * 获取资源链接
      * @param {string} uri
      * @param {number} index
      */
@@ -214,19 +206,29 @@
     function getPrivateSrc(container, index) {
         let resourceContainer = container;
         if (isMultiplePost(container)) {
-            resourceContainer = container.querySelector(`ul.vi798 li:nth-child(${index + 2})`);
+            /**
+             * 图片在post开始是第一个有效的li
+             * post结尾是第二个li
+             * post中间是中间一个li（中间）
+             */
+            const hasPrevBtn = container.querySelectorAll('.POSa_').length !== 0;
+            const hasNextBtn = container.querySelectorAll('._6CZji').length !== 0;
+
+            let nth = 3;
+            if (hasNextBtn && !hasPrevBtn) {
+                nth = 2;
+            }
+            resourceContainer = container.querySelector(`ul.vi798 li:nth-child(${nth})`);
         }
-        const img = resourceContainer.querySelector('img');
         const video = resourceContainer.querySelector('video');
-        console.log(`img: `, img);
-        console.log(`video: `, video);
+        const img = resourceContainer.querySelector('img');
+        if (video) {
+            return video.src;
+        }
         if (img) {
             const sets = img.srcset.split(',');
             const lastSet = sets[0];
             return lastSet.split(' ')[0];
-        }
-        if (video) {
-            return video.src;
         }
     }
 
