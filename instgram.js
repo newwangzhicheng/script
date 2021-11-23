@@ -1,13 +1,15 @@
 // ==UserScript==
-// @name         Instagram: 图片，视频下载器
-// @name:en      Instagram: pictures, video downloader
+// @name         Instagram: 图片，视频批量下载器
+// @name:en      Instagram: pictures, video batch downloader
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  Instagram下载器，支持图片和视频
-// @description:en  Downloader for Instagram, support pictures and videos
+// @version      4.0
+// @description  Instagram下载器，支持图片和视频批量下载
+// @description:en  Downloader for Instagram, support batch download pictures and videos
 // @author       jaywang
 // @match        https://www.instagram.com/*
 // @require      https://cdn.jsdelivr.net/npm/jquery@3.2.1/dist/jquery.min.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js
 // @icon         data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==
 // @grant        unsafeWindow
 // @run-at       document-idle
@@ -24,8 +26,12 @@
     const usernameASelector = 'header.Ppjfr  a.ZIAjV';
     /** 复制图片按钮选择器 */
     const copyURLSelector = `${selectionListSelector} > button:nth-last-child(3)`;
-    /** 下载图片按钮 */
-    const jaywangdownloadBtn = '<button jaywangdownload="jaywang" class="aOOlW" tabindex="0" style="color: #58c322">下载</button>';
+    /** 打开帖子按钮选择器 */
+    const openPostSelector = `${selectionListSelector} > button:nth-last-child(2)`;
+    /** 单个下载按钮 */
+    const singleDownloadBtn = '<button jaywangdownload="single" class="aOOlW" tabindex="0" style="color: #58c322">下载</button>';
+    /** 批量下载图片按钮 */
+    const batchDownloadBtn = '<button jaywangdownload="batch" class="aOOlW" tabindex="0" style="color: #58c322">下载合集</button>';
     /**
      * 当前post的下标
      * -1: 代表单图
@@ -40,8 +46,8 @@
      * 点击三个小点更多按钮
      */
     $('body').click(async (el) => {
-        /** 下载图片按钮事件 */
-        if (el.target.getAttribute('jaywangdownload') === 'jaywang') {
+        /** 下载按钮事件 */
+        if (el.target.getAttribute('jaywangdownload') === 'single') {
             const index = currentIndex;
             const post = currentPost;
             const username = post.querySelector(usernameASelector).text;
@@ -57,7 +63,21 @@
                 initSrc = await navigator.clipboard.readText();
                 src = await getResource(initSrc, index);
             }
-            saveAs(src, getName(username, index));
+            save(src, getName(username, index));
+        }
+
+        /** 下载合集按钮事件 */
+        if (el.target.getAttribute('jaywangdownload') === 'batch') {
+            let initSrc;
+            if (isPrivateUser() && withoutOpenPostBtn()) {
+                //console.log(`location`, location)
+            } else {
+                $(`${selectionListSelector} > button:nth-last-child(${getOpenPostLastLocation()})`).click();
+            }
+            initSrc = location.href;
+            const data = await fetchPostInformation(initSrc);
+            const batchInfo = getBatchInformation(data);
+            batchSaveAs(batchInfo);
         }
 
         /** 点击三个小点更多按钮 */
@@ -67,7 +87,8 @@
             /** 容纳点点点的容器 */
             const container = currentPost.querySelector('._97aPb');
             const dots = currentPost.querySelector('._3eoV-');
-            currentIndex = isMultiplePost(container) ? getPostIndex(dots) : 0;
+            const isMulti = isMultiplePost(container);
+            currentIndex = isMulti ? getPostIndex(dots) : 0;
         }
     });
     /**  */
@@ -77,7 +98,8 @@
         for (const record of mutationRecord) {
             const nodeList = record.addedNodes;
             if (nodeList.length === 1 && isMoreOptionButton(nodeList[0])) {
-                $(selectionListSelector).prepend(jaywangdownloadBtn);
+                $(selectionListSelector).prepend(singleDownloadBtn);
+                $(selectionListSelector).prepend(batchDownloadBtn);
                 return;
             }
         }
@@ -99,18 +121,28 @@
     }
 
     /**
+     * 获取Post信息
+     * @param uri
+     * @returns {Promise<any>}
+     */
+    async function fetchPostInformation(uri) {
+        let formatedUri = uri;
+        if (uri.includes('?utm_source')) {
+            formatedUri = uri.match(/.*(?=\?utm_source)/);
+        }
+        formatedUri += '?__a=1';
+        const result = await fetch(formatedUri);
+        const data = await result.json();
+        return data;
+    }
+
+    /**
      * 获取资源链接
      * @param {string} uri
      * @param {number} index
      */
     async function getResource(uri, index) {
-        let formatedUri = uri;
-        if (uri.includes('?utm_source')) {
-            formatedUri = uri.match(/.*(?=\?utm_source)/);
-            formatedUri += '?__a=1';
-        }
-        const result = await fetch(formatedUri);
-        const data = await result.json();
+        const data = await fetchPostInformation(uri);
         const isSingle = data.graphql.shortcode_media.edge_sidecar_to_children === undefined;
         const node = isSingle
             ? data.graphql.shortcode_media
@@ -122,6 +154,41 @@
             : node.display_resources[node.display_resources.length - 1].src;
         return src;
 
+    }
+
+    /**
+     * 获取第i个信息
+     * @param data
+     * @param index
+     * @returns {*|string}
+     */
+    function getBatchInformation(data) {
+        const isSingle = data.graphql.shortcode_media.edge_sidecar_to_children === undefined;
+        let edges;
+        if (isSingle) {
+            edges = [
+                {
+                    node: data.graphql.shortcode_media
+                }
+            ];
+        } else {
+            edges = data.graphql.shortcode_media.edge_sidecar_to_children.edges;
+        }
+        const username = data.graphql.shortcode_media.owner.username;
+        const infoList = [];
+        for (const i in edges) {
+            const node = edges[i].node;
+            const isVideo = node.is_video;
+            const src = isVideo
+                ? node.video_url
+                : node.display_resources[node.display_resources.length - 1].src;
+            infoList.push({
+                name: getName(username, i),
+                src,
+                suffix: isVideo ? 'mp4' : 'jpg'
+            });
+        }
+        return infoList;
     }
 
     /**
@@ -142,15 +209,46 @@
      * @param {string} src 下载源
      * @param {string} name 图片名称
      */
-    async function saveAs(src, name) {
+    async function save(src, name) {
         const data = await fetch(src);
         const blob = await data.blob();
-        const domString = URL.createObjectURL(blob);
+        downloadBlob(blob, name);
+    }
 
+    /**
+     * 下载blob
+     * @param {blob} blob
+     */
+    function downloadBlob(blob) {
+        const domString = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = domString;
         a.setAttribute('download', name);
         a.click();
+    }
+
+    /**
+     * 批量下载
+     */
+    async function batchSaveAs(fileList) {
+        let promiseList = [];
+        let filenameList = [];
+        let filename;
+        for (const { src, name, suffix } of fileList) {
+            filename = name;
+            const promise = fetch(src);
+            promiseList.push(promise);
+            filenameList.push(`${name}.${suffix}`);
+        }
+        const resultList = await Promise.all(promiseList);
+        const blobList = resultList.map((result) => result.blob());
+        const zip = new JSZip();
+        const folder = zip.folder(filename);
+        for(let i = 0; i < filenameList.length; i++) {
+            folder.file(filenameList[i], blobList[i]);
+        }
+        const content = await folder.generateAsync({type:"blob"});
+        saveAs(content, `${filename}.zip`);
     }
 
     /**
@@ -194,8 +292,27 @@
      */
     function isPrivateUser() {
         const nodeList = document.querySelector(selectionListSelector).querySelectorAll('.HoLwm');
-        return nodeList.length <= 2;
+        return nodeList.length <= 3;
     }
+
+    /**
+     * 判断是否有打开帖子按钮
+     * @returns {boolean}
+     */
+    function withoutOpenPostBtn() {
+        const nodeList = document.querySelector(selectionListSelector).querySelectorAll('.HoLwm');
+        return nodeList.length === 1;
+    }
+
+    /**
+     * 获取打开帖子按钮倒数的位置
+     * @returns {number}
+     */
+    function getOpenPostLastLocation() {
+        const nodeList = document.querySelector(selectionListSelector).querySelectorAll('.HoLwm');
+        return nodeList.length;
+    }
+
 
     /**
      * 获取图片，视频资源链接
