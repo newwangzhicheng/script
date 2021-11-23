@@ -29,7 +29,7 @@
     const jaywangdownloadBtn = '<button jaywangdownload="jaywang" class="aOOlW" tabindex="0" style="color: #58c322">下载</button>';
     /**
      * 当前post的下标
-     * -1: 代表不合法下标
+     * -1: 代表单图
      */
     let currentIndex = -1;
     /**
@@ -54,7 +54,8 @@
             let initSrc;
             let src;
             if (isPrivate) {
-                src = getPrivateSrc(post.querySelector('._97aPb'));
+                const container = post.querySelector('._97aPb');
+                src = getPrivateSrc(container, index);
             } else {
                 $(copyURLSelector).click();
                 initSrc = await navigator.clipboard.readText();
@@ -118,7 +119,6 @@
         }
         const result = await fetch(formatedUri);
         const data = await result.json();
-        const username = data.graphql.shortcode_media.owner.username;
         const isSingle = data.graphql.shortcode_media.edge_sidecar_to_children === undefined;
         const node = isSingle
             ? data.graphql.shortcode_media
@@ -180,7 +180,7 @@
 
     /**
      * 判断post图片/视频数量是多个还是单个
-     * @param {Element} el
+     * @param {Element} el container
      * @return {boolean}
      */
     function isMultiplePost(el) {
@@ -207,12 +207,19 @@
 
     /**
      * 获取图片，视频资源链接
-     * @param container
+     * @param {Element} container
+     * @param {number} index
      * @returns {string}
      */
-    function getPrivateSrc(container) {
-        const img = container.querySelectorAll('img');
-        const video = container.querySelectorAll('video');
+    function getPrivateSrc(container, index) {
+        let resourceContainer = container;
+        if (isMultiplePost(container)) {
+            resourceContainer = container.querySelector(`ul.vi798 li:nth-child(${index + 2})`);
+        }
+        const img = resourceContainer.querySelector('img');
+        const video = resourceContainer.querySelector('video');
+        console.log(`img: `, img);
+        console.log(`video: `, video);
         if (img) {
             const sets = img.srcset.split(',');
             const lastSet = sets[0];
